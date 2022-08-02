@@ -352,8 +352,8 @@ contract ve is IERC721, IERC721Metadata {
     event Supply(uint prevSupply, uint supply);
 
     uint internal constant WEEK = 1 weeks;
-    uint internal constant MAXTIME = 4 * 365 * 86400;
-    int128 internal constant iMAXTIME = 4 * 365 * 86400;
+    uint internal constant MAXTIME = 4 * 365 days;
+    int128 internal constant iMAXTIME = 4 * 365 days;
     uint internal constant MULTIPLIER = 1 ether;
 
     address immutable public token;
@@ -412,9 +412,9 @@ contract ve is IERC721, IERC721Metadata {
     bytes4 internal constant ERC721_METADATA_INTERFACE_ID = 0x5b5e139f;
 
     /// @dev reentrancy guard
-    uint8 internal constant _not_entered = 1;
-    uint8 internal constant _entered = 2;
-    uint8 internal _entered_state = 1;
+    uint256 internal constant _not_entered = 1;
+    uint256 internal constant _entered = 2;
+    uint256 internal _entered_state = 1;
     modifier nonreentrant() {
         require(_entered_state == _not_entered);
         _entered_state = _entered;
@@ -513,12 +513,18 @@ contract ve is IERC721, IERC721Metadata {
     /// @param _spender address of the spender to query
     /// @param _tokenId uint ID of the token to be transferred
     /// @return bool whether the msg.sender is approved for the given token ID, is an operator of the owner, or is the owner of the token
-    function _isApprovedOrOwner(address _spender, uint _tokenId) internal view returns (bool) {
+    function _isApprovedOrOwner(address _spender, uint256 _tokenId) internal view returns (bool) {
         address owner = idToOwner[_tokenId];
-        bool spenderIsOwner = owner == _spender;
-        bool spenderIsApproved = _spender == idToApprovals[_tokenId];
-        bool spenderIsApprovedForAll = (ownerToOperators[owner])[_spender];
-        return spenderIsOwner || spenderIsApproved || spenderIsApprovedForAll;
+        if (owner == _spender) {
+            return true;
+        }
+        if (_spender == idToApprovals[_tokenId]) {
+            return true;
+        }
+        if ((ownerToOperators[owner])[_spender]) {
+            return true;
+        }
+        return false;
     }
 
     function isApprovedOrOwner(address _spender, uint _tokenId) external view returns (bool) {
@@ -602,7 +608,7 @@ contract ve is IERC721, IERC721Metadata {
         }
     }
 
-    /// @dev Exeute transfer of a NFT.
+    /// @dev Execute transfer of a NFT.
     ///      Throws unless `msg.sender` is the current owner, an authorized operator, or the approved
     ///      address for this NFT. (NOTE: `msg.sender` not allowed in internal function so pass `_sender`.)
     ///      Throws if `_to` is the zero address.
@@ -614,7 +620,8 @@ contract ve is IERC721, IERC721Metadata {
         uint _tokenId,
         address _sender
     ) internal {
-        require(attachments[_tokenId] == 0 && !voted[_tokenId], "attached");
+        require(attachments[_tokenId] == 0, "attached");
+        require(!voted[_tokenId], "attached");
         // Check requirements
         require(_isApprovedOrOwner(_sender, _tokenId));
         // Clear approval. Throws if `_from` is not the current owner
@@ -773,8 +780,8 @@ contract ve is IERC721, IERC721Metadata {
     ) internal {
         Point memory u_old;
         Point memory u_new;
-        int128 old_dslope = 0;
-        int128 new_dslope = 0;
+        int128 old_dslope;
+        int128 new_dslope;
         uint _epoch = epoch;
 
         if (_tokenId != 0) {
@@ -811,7 +818,7 @@ contract ve is IERC721, IERC721Metadata {
         // (approximately, for *At methods) and save them
         // as we cannot figure that out exactly from inside the contract
         Point memory initial_last_point = last_point;
-        uint block_slope = 0; // dblock/dt
+        uint block_slope; // dblock/dt
         if (block.timestamp > last_point.ts) {
             block_slope = (MULTIPLIER * (block.number - last_point.blk)) / (block.timestamp - last_point.ts);
         }
@@ -821,11 +828,11 @@ contract ve is IERC721, IERC721Metadata {
         // Go over weeks to fill history and calculate what the current point is
         {
             uint t_i = (last_checkpoint / WEEK) * WEEK;
-            for (uint i = 0; i < 255; ++i) {
+            for (uint i; i < 255; ) {
                 // Hopefully it won't happen that this won't get used in 5 years!
                 // If it does, users will be able to withdraw but vote weight will be broken
                 t_i += WEEK;
-                int128 d_slope = 0;
+                int128 d_slope;
                 if (t_i > block.timestamp) {
                     t_i = block.timestamp;
                 } else {
@@ -850,6 +857,9 @@ contract ve is IERC721, IERC721Metadata {
                     break;
                 } else {
                     point_history[_epoch] = last_point;
+                }
+                unchecked {
+                    ++i;
                 }
             }
         }
@@ -970,7 +980,8 @@ contract ve is IERC721, IERC721Metadata {
     }
 
     function merge(uint _from, uint _to) external {
-        require(attachments[_from] == 0 && !voted[_from], "attached");
+        require(attachments[_from] == 0, "attached");
+        require(!voted[_from], "attached");
         require(_from != _to);
         require(_isApprovedOrOwner(msg.sender, _from));
         require(_isApprovedOrOwner(msg.sender, _to));
@@ -1005,7 +1016,7 @@ contract ve is IERC721, IERC721Metadata {
 
         require(_value > 0); // dev: need non-zero value
         require(_locked.amount > 0, 'No existing lock found');
-        require(_locked.end > block.timestamp, 'Cannot add to expired lock. Withdraw');
+        require(_locked.end > block.timestamp, 'Expired lock. Withdraw');
         _deposit_for(_tokenId, _value, 0, _locked, DepositType.DEPOSIT_FOR_TYPE);
     }
 
@@ -1017,7 +1028,7 @@ contract ve is IERC721, IERC721Metadata {
         uint unlock_time = (block.timestamp + _lock_duration) / WEEK * WEEK; // Locktime is rounded down to weeks
 
         require(_value > 0); // dev: need non-zero value
-        require(unlock_time > block.timestamp, 'Can only lock until time in the future');
+        require(unlock_time > block.timestamp, 'Lock time must be in the future');
         require(unlock_time <= block.timestamp + MAXTIME, 'Voting lock can be 4 years max');
 
         ++tokenId;
@@ -1052,7 +1063,7 @@ contract ve is IERC721, IERC721Metadata {
 
         assert(_value > 0); // dev: need non-zero value
         require(_locked.amount > 0, 'No existing lock found');
-        require(_locked.end > block.timestamp, 'Cannot add to expired lock. Withdraw');
+        require(_locked.end > block.timestamp, 'Expired lock. Withdraw');
 
         _deposit_for(_tokenId, _value, 0, _locked, DepositType.INCREASE_LOCK_AMOUNT);
     }
@@ -1077,7 +1088,8 @@ contract ve is IERC721, IERC721Metadata {
     /// @dev Only possible if the lock has expired
     function withdraw(uint _tokenId) external nonreentrant {
         assert(_isApprovedOrOwner(msg.sender, _tokenId));
-        require(attachments[_tokenId] == 0 && !voted[_tokenId], "attached");
+        require(attachments[_tokenId] == 0, "attached");
+        require(!voted[_tokenId], "attached");
 
         LockedBalance memory _locked = locked[_tokenId];
         require(block.timestamp >= _locked.end, "The lock didn't expire");
@@ -1111,9 +1123,9 @@ contract ve is IERC721, IERC721Metadata {
     /// @return Approximate timestamp for block
     function _find_block_epoch(uint _block, uint max_epoch) internal view returns (uint) {
         // Binary search
-        uint _min = 0;
+        uint _min;
         uint _max = max_epoch;
-        for (uint i = 0; i < 128; ++i) {
+        for (uint i; i < 128; ++i) {
             // Will be always enough for 128-bit numbers
             if (_min >= _max) {
                 break;
@@ -1178,12 +1190,12 @@ contract ve is IERC721, IERC721Metadata {
     function _balanceOfAtNFT(uint _tokenId, uint _block) internal view returns (uint) {
         // Copying and pasting totalSupply code because Vyper cannot pass by
         // reference yet
-        assert(_block <= block.number);
+        require(_block <= block.number);
 
         // Binary search
-        uint _min = 0;
+        uint _min;
         uint _max = user_point_epoch[_tokenId];
-        for (uint i = 0; i < 128; ++i) {
+        for (uint i; i < 128; ) {
             // Will be always enough for 128-bit numbers
             if (_min >= _max) {
                 break;
@@ -1194,6 +1206,9 @@ contract ve is IERC721, IERC721Metadata {
             } else {
                 _max = _mid - 1;
             }
+            unchecked {
+                ++i;
+            }
         }
 
         Point memory upoint = user_point_history[_tokenId][_min];
@@ -1201,8 +1216,8 @@ contract ve is IERC721, IERC721Metadata {
         uint max_epoch = epoch;
         uint _epoch = _find_block_epoch(_block, max_epoch);
         Point memory point_0 = point_history[_epoch];
-        uint d_block = 0;
-        uint d_t = 0;
+        uint d_block;
+        uint d_t;
         if (_epoch < max_epoch) {
             Point memory point_1 = point_history[_epoch + 1];
             d_block = point_1.blk - point_0.blk;
@@ -1235,9 +1250,9 @@ contract ve is IERC721, IERC721Metadata {
     function _supply_at(Point memory point, uint t) internal view returns (uint) {
         Point memory last_point = point;
         uint t_i = (last_point.ts / WEEK) * WEEK;
-        for (uint i = 0; i < 255; ++i) {
+        for (uint i; i < 255; ) {
             t_i += WEEK;
-            int128 d_slope = 0;
+            int128 d_slope;
             if (t_i > t) {
                 t_i = t;
             } else {
@@ -1249,6 +1264,9 @@ contract ve is IERC721, IERC721Metadata {
             }
             last_point.slope += d_slope;
             last_point.ts = t_i;
+            unchecked {
+                ++i;
+            }
         }
 
         if (last_point.bias < 0) {
@@ -1261,8 +1279,7 @@ contract ve is IERC721, IERC721Metadata {
     /// @dev Adheres to the ERC20 `totalSupply` interface for Aragon compatibility
     /// @return Total voting power
     function totalSupplyAtT(uint t) public view returns (uint) {
-        uint _epoch = epoch;
-        Point memory last_point = point_history[_epoch];
+        Point memory last_point = point_history[epoch];
         return _supply_at(last_point, t);
     }
 
@@ -1328,7 +1345,7 @@ contract ve is IERC721, IERC721Metadata {
     }
 
     function _burn(uint _tokenId) internal {
-        require(_isApprovedOrOwner(msg.sender, _tokenId), "caller is not owner nor approved");
+        require(_isApprovedOrOwner(msg.sender, _tokenId), "Caller is not owner nor approved");
 
         address owner = ownerOf(_tokenId);
 
